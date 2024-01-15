@@ -1,0 +1,61 @@
+{{- if .Values.istio.enabled -}}
+{{- if .Values.istio.gateway.create -}}
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: {{ include "registry.fullname" . }}
+spec:
+  selector:
+    {{ toYaml .Values.istio.gateway.selector }}
+  servers:
+  - hosts:
+    {{- range .Values.istio.hosts }}
+    - {{ .host }}
+    {{- end }}
+    port:
+      name: http
+      number: 80
+      protocol: HTTP
+  - hosts:
+    {{- range .Values.istio.hosts }}
+    - {{ .host }}
+    {{- end }}
+    port:
+      name: https
+      number: 443
+      protocol: HTTPS
+    tls:
+      credentialName: {{ include "registry.fullname" . }}
+      maxProtocolVersion: TLSV1_3
+      minProtocolVersion: TLSV1_2
+      mode: SIMPLE
+---
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: {{ include "registry.fullname" . }}-basic-auth
+  namespace: {{ .Values.istio.gateway.istioNamespace }}
+spec:
+  selector:
+    matchLabels:
+      {{ toYaml .Values.istio.gateway.selector }}
+  url: oci://ghcr.io/istio-ecosystem/wasm-extensions/basic_auth:1.12.0
+  phase: AUTHN
+  pluginConfig:
+    basic_auth_rules:
+    {{- range .Values.istio.hosts }}
+    {{- if .upload }}
+      - prefix: /
+        hosts:
+        - {{ .host }}
+        request_methods:
+        - "GET"
+        - "POST"
+        - "HEAD"                    
+        credentials:
+        - {{ .username }}:{{ .password }}
+    {{- end }}
+    {{- end }}        
+---                
+{{- end }}
+{{- end }}

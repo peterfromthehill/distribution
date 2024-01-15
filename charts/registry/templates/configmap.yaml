@@ -1,0 +1,12 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}  
+  name: {{ include "registry.fullname" . }}-config
+data:
+  config.yml: |
+  {{- with .Values.config }}
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
