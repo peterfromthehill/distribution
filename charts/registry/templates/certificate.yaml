@@ -1,0 +1,22 @@
+{{- if .Values.istio.enabled -}}
+{{- if .Values.istio.gateway.create -}}
+{{- if .Values.istio.gateway.certmanager.create -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "registry.fullname" . }}
+  namespace: {{ .Values.istio.gateway.istioNamespace }}
+spec:
+  commonName: {{ (first .Values.istio.hosts).host }}
+  dnsNames:
+  {{- range .Values.istio.hosts }}
+  - {{ .host }}
+  {{- end }}
+  renewBefore: 360h0m0s
+  secretName: {{ include "registry.fullname" . }}
+  issuerRef:
+{{ toYaml .Values.istio.gateway.certmanager.issuerRef | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+

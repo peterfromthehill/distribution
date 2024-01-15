@@ -42,6 +42,11 @@ require (
 )
 
 require (
+	github.com/moul/http2curl v1.0.0 // indirect
+	github.com/studio-b12/gowebdav v0.9.0 // indirect
+)
+
+require (
 	cloud.google.com/go v0.110.7 // indirect
 	cloud.google.com/go/compute v1.23.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
