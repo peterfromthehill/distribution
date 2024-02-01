@@ -9,7 +9,7 @@ on:
     - cron: '0 12 * * 6'
   push:
     branches:
-      - 'main'
+      - 'webdav'
       - 'release/*'
     tags:
       - 'v*'

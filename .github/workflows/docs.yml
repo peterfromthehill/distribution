@@ -7,7 +7,7 @@ concurrency:
 on:
   push:
     branches:
-      - main
+      - webdav
     paths:
       - .github/workflows/docs.yml
       - dockerfiles/docs.Dockerfile

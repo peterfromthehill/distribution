@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '26 0 * * 0'
   push:
-    branches: [ "main" ]
+    branches: [ "webdav" ]
 
 # Declare default permissions as read only.
 permissions: read-all
