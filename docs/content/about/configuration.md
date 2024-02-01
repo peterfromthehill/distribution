@@ -220,6 +220,8 @@ http:
     X-Content-Type-Options: [nosniff]
   http2:
     disabled: false
+  h2c:
+    enabled: false
 notifications:
   events:
     includereferences: true
@@ -434,17 +436,17 @@ The `storage` option is **required** and defines which storage backend is in
 use. You must configure exactly one backend. If you configure more, the registry
 returns an error. You can choose any of these backend storage drivers:
 
-| Storage driver      | Description                                                                                                                                                                                                                                                                              |
-|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `filesystem`        | Uses the local disk to store registry files. It is ideal for development and may be appropriate for some small-scale production applications. See the [driver's reference documentation](/storage-drivers/filesystem). |
-| `azure`             | Uses Microsoft Azure Blob Storage. See the [driver's reference documentation](/storage-drivers/azure).                                                                                                               |
-| `gcs`               | Uses Google Cloud Storage. See the [driver's reference documentation](/storage-drivers/gcs).                                                                                                                           |
-| `s3`                | Uses Amazon Simple Storage Service (S3) and compatible Storage Services. See the [driver's reference documentation](/storage-drivers/s3).                                                                            |
+| Storage driver | Description                                                                                                                                                                                                                 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filesystem`   | Uses the local disk to store registry files. It is ideal for development and may be appropriate for some small-scale production applications. See the [driver's reference documentation](../storage-drivers/filesystem.md). |
+| `azure`        | Uses Microsoft Azure Blob Storage. See the [driver's reference documentation](../storage-drivers/azure.md).                                                                                                                 |
+| `gcs`          | Uses Google Cloud Storage. See the [driver's reference documentation](../storage-drivers/gcs.md).                                                                                                                           |
+| `s3`           | Uses Amazon Simple Storage Service (S3) and compatible Storage Services. See the [driver's reference documentation](../storage-drivers/s3.md).                                                                              |
 
 For testing only, you can use the [`inmemory` storage
-driver](/storage-drivers/inmemory).
+driver](../storage-drivers/inmemory.md).
 If you would like to run a registry from volatile memory, use the
-[`filesystem` driver](/storage-drivers/filesystem)
+[`filesystem` driver](../storage-drivers/filesystem.md)
 on a ramdisk.
 
 If you are deploying a registry on Windows, a Windows volume mounted from the
@@ -593,7 +595,7 @@ security.
 
 
 For more information about Token based authentication configuration, see the
-[specification](/spec/auth/token).
+[specification](../spec/auth/token.md).
 
 ### `htpasswd`
 
@@ -724,6 +726,8 @@ http:
     X-Content-Type-Options: [nosniff]
   http2:
     disabled: false
+  h2c:
+    enabled: false
 ```
 
 The `http` option details the configuration for the HTTP server that hosts the
@@ -870,12 +874,23 @@ registry. This header is included in the example configuration file.
 
 ### `http2`
 
-The `http2` structure within `http` is **optional**. Use this to control http2
+The `http2` structure within `http` is **optional**. Use this to control HTTP/2 over TLS
 settings for the registry.
+If `tls` is not configured this option is ignored. To enable HTTP/2 over non TLS connections use `h2c` instead.
 
 | Parameter | Required | Description                                           |
 |-----------|----------|-------------------------------------------------------|
 | `disabled` | no      | If `true`, then `http2` support is disabled.          |
+
+### `h2c`
+
+The `h2c` structure within `http` is **optional**. Use this to control H2C (HTTP/2 Cleartext)
+settings for the registry.
+Useful when deploying the registry behind a load balancer (e.g. Google Cloud Run)
+
+| Parameter | Required | Description                                           |
+|-----------|----------|-------------------------------------------------------|
+| `enabled` | no      | If `true`, then `h2c` support is enabled.              |
 
 ## `notifications`
 
@@ -1100,7 +1115,7 @@ proxy:
 
 The `proxy` structure allows a registry to be configured as a pull-through cache
 to Docker Hub. See
-[mirror](/recipes/mirror)
+[mirror](../recipes/mirror.md)
 for more information. Pushing to a registry configured as a pull-through cache
 is unsupported.
 
