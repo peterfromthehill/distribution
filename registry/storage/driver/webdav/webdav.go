@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"path"
+	"strings"
 	"sync"
 
 	storagedriver "github.com/distribution/distribution/v3/registry/storage/driver"
 	"github.com/distribution/distribution/v3/registry/storage/driver/base"
 	"github.com/distribution/distribution/v3/registry/storage/driver/factory"
+	"github.com/sirupsen/logrus"
 	"github.com/studio-b12/gowebdav"
 )
 
@@ -93,53 +94,12 @@ func (d *driver) Name() string {
 	return driverName
 }
 
-// GetContent retrieves the content stored at "path" as a []byte.
-// This should primarily be used for small objects.
-func (d *driver) GetContent(ctx context.Context, path string) ([]byte, error) {
-	log.Printf("GetContent: %s", path)
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	if d.accessMutex[path] == nil {
-		var fileMutex sync.RWMutex
-		d.accessMutex[path] = &fileMutex
-	}
-	d.accessMutex[path].Lock()
-	defer d.accessMutex[path].Unlock()
-	// err := d.c.Connect()
-	// if err != nil {
-	// 	return nil, storagedriver.PathNotFoundError{Path: path}
-	// }
-	fi, err := d.Stat(ctx, path)
-	log.Printf("GetContent: Fi: %v / Err: %v", fi, err)
-	// if fi != nil && fi.Size() == 0 {
-	// 	log.Printf("Realy 0? Sleep some seconds and try again")
-	// 	time.Sleep(10 * time.Second)
-	// 	fi, err := d.Stat(ctx, path)
-	// 	log.Printf("GetContent: Fi: %v / Err: %v", fi, err)
-	// }
-	bytes, err := d.c.Read(path)
-	if err != nil {
-		return nil, storagedriver.PathNotFoundError{Path: path}
-	}
-	log.Printf("GetContent() read %d bytes", len(bytes))
-	if len(bytes) == 0 {
-		// strange
-		log.Printf("Realy 0?")
-		//time.Sleep(20 * time.Second)
-	}
-	return bytes, nil
-}
-
 // PutContent stores the []byte content at a location designated by "path".
 // This should primarily be used for small objects.
 func (d *driver) PutContent(ctx context.Context, path string, content []byte) error {
-	log.Printf("PutContent: %s", path)
+	logrus.Debugf("PutContent: %s / Bytes: %d", path, len(content))
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	// err := d.c.Connect()
-	// if err != nil {
-	// 	return err
-	// }
 	err := d.c.Write(path, content, fs.ModeAppend)
 	return err
 }
@@ -148,82 +108,28 @@ func (d *driver) PutContent(ctx context.Context, path string, content []byte) er
 // with a given byte offset.
 // May be used to resume reading a stream by providing a nonzero offset.
 func (d *driver) Reader(ctx context.Context, path string, offset int64) (io.ReadCloser, error) {
-	log.Printf("Reader: %s", path)
+	logrus.Debugf("Reader: %s", path)
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	// err := d.c.Connect()
-	// if err != nil {
-	// 	return nil, err
-	// }
 	return d.c.ReadStreamRange(path, offset, 0)
-}
-
-// Writer returns a FileWriter which will store the content written to it
-// at the location designated by "path" after the call to Commit.
-// A path may be appended to if it has not been committed, or if the
-// existing committed content is zero length.
-//
-// The behaviour of appending to paths with non-empty committed content is
-// undefined. Specific implementations may document their own behavior.
-func (d *driver) Writer(ctx context.Context, path string, append bool) (storagedriver.FileWriter, error) {
-	log.Printf("Writer: %s Append: %v", path, append)
-
-	buffer := []byte{}
-	var err error
-	if append {
-		buffer, err = d.GetContent(ctx, path)
-		if err != nil {
-			log.Printf("Error, assume file not exists: %v", err)
-			log.Printf("Buffer: %s", string(buffer))
-			buffer = []byte{}
-		}
-	}
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	webdavWriter := d.newWebdavWriter(d.c, path)
-	go func(path string, d *driver) {
-		if d.accessMutex[path] == nil {
-			var fileMutex sync.RWMutex
-			d.accessMutex[path] = &fileMutex
-		}
-		d.accessMutex[path].Lock()
-		defer d.accessMutex[path].Unlock()
-		log.Printf("Start Stream")
-		err := d.c.WriteStream(path, webdavWriter.Reader, fs.ModeAppend)
-		if err != nil {
-			log.Printf("WriteStream hat ein Problem: %v", err)
-		}
-		log.Printf("Writer: Quit Subrouting: %s", path)
-	}(path, d)
-	if append {
-		if len(buffer) > 0 {
-			log.Printf("Writer(): FIXME: Appending")
-			length, err := webdavWriter.Write(buffer)
-			if err != nil {
-				return nil, err
-			}
-			if length != len(buffer) {
-				return nil, fmt.Errorf("file get total get lost :/ maybe delete?!")
-			}
-		}
-		log.Printf("Seek: %d", webdavWriter.Size())
-	}
-	return webdavWriter, nil
 }
 
 // Stat retrieves the FileInfo for the given path, including the current
 // size in bytes and the creation time.
 func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
-	log.Printf("Stat: %s", path)
+	logrus.Debugf("Stat: %s", path)
 	// d.mutex.Lock()
 	// defer d.mutex.Unlock()
-	// err := d.c.Connect()
-	// if err != nil {
-	// 	return nil, err
-	// }
 	fileInfo, err := d.c.Stat(path)
 	if err != nil {
-		return nil, storagedriver.PathNotFoundError{Path: path}
+		// Maybe it is a directory, we have to test it with a '/' at the end
+		tmp_path := strings.TrimSuffix(path, "/") + "/"
+		fileInfo, err = d.c.Stat(tmp_path)
+		if err != nil {
+			// its neither a file or a directory
+			logrus.Debugf("Path not found: %v / Fi: %v", err, fileInfo)
+			return nil, storagedriver.PathNotFoundError{Path: path}
+		}
 	}
 	fi := storagedriver.FileInfoFields{
 		Path:    path,
@@ -251,8 +157,14 @@ func (d *driver) List(ctx context.Context, path string) ([]string, error) {
 	fileInfos, _ := d.c.ReadDir(path)
 	var files []string
 	for _, i := range fileInfos {
-		files = append(files, i.Name())
+		name := i.Name()
+		// if i.IsDir() {
+		// 	name = strings.TrimSuffix(name, "/") + "/"
+		// }
+		file := strings.TrimSuffix(path, "/") + "/" + name
+		files = append(files, file)
 	}
+	logrus.Debugf("List: %v", files)
 	return files, nil
 }
 
