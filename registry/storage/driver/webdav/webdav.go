@@ -31,9 +31,10 @@ func (factory *webdavDriverFactory) Create(ctx context.Context, parameters map[s
 }
 
 type driver struct {
-	c           *gowebdav.Client
-	mutex       sync.RWMutex
-	accessMutex map[string]*sync.RWMutex
+	c                *gowebdav.Client
+	mutex            sync.RWMutex
+	accessMutex      map[string]*sync.RWMutex
+	accessMutexMutex sync.RWMutex
 }
 
 // baseEmbed allows us to hide the Base embed.
@@ -155,7 +156,7 @@ func (d *driver) List(ctx context.Context, path string) ([]string, error) {
 		return nil, storagedriver.Error{Detail: fmt.Errorf("not a directory")}
 	}
 	fileInfos, _ := d.c.ReadDir(path)
-	var files []string
+	files := []string{}
 	for _, i := range fileInfos {
 		name := i.Name()
 		// if i.IsDir() {

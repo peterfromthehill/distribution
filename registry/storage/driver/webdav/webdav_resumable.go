@@ -19,10 +19,12 @@ func (d *driver) GetContent(ctx context.Context, path string) ([]byte, error) {
 	logrus.Debugf("GetContent: %s", path)
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
+	d.accessMutexMutex.Lock()
 	if d.accessMutex[path] == nil {
 		var fileMutex sync.RWMutex
 		d.accessMutex[path] = &fileMutex
 	}
+	d.accessMutexMutex.Unlock()
 	d.accessMutex[path].Lock()
 	defer d.accessMutex[path].Unlock()
 
@@ -58,10 +60,12 @@ func (d *driver) Writer(ctx context.Context, path string, append bool) (storaged
 	defer d.mutex.Unlock()
 	webdavWriter := d.newWebdavWriter(d.c, path)
 	go func(path string, d *driver) {
+		d.accessMutexMutex.Lock()
 		if d.accessMutex[path] == nil {
 			var fileMutex sync.RWMutex
 			d.accessMutex[path] = &fileMutex
 		}
+		d.accessMutexMutex.Unlock()
 		d.accessMutex[path].Lock()
 		defer d.accessMutex[path].Unlock()
 		logrus.Debugf("Start Stream")
