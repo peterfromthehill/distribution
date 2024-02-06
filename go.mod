@@ -28,17 +28,13 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.0
 	github.com/stretchr/testify v1.8.4
+	github.com/studio-b12/gowebdav v0.9.0
 	go.opentelemetry.io/contrib/exporters/autoexport v0.46.1
 	go.opentelemetry.io/otel/sdk v1.21.0
 	golang.org/x/crypto v0.18.0
 	golang.org/x/oauth2 v0.11.0
 	google.golang.org/api v0.126.0
 	gopkg.in/yaml.v2 v2.4.0
-)
-
-require (
-	github.com/moul/http2curl v1.0.0 // indirect
-	github.com/studio-b12/gowebdav v0.9.0 // indirect
 )
 
 require (
