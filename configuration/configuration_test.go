@@ -39,6 +39,9 @@ var configStruct = Configuration{
 			"url1":    "https://foo.example.com",
 			"path1":   "/some-path",
 		},
+		"tag": Parameters{
+			"concurrencylimit": 10,
+		},
 	},
 	Auth: Auth{
 		"silly": Parameters{
@@ -148,6 +151,13 @@ var configStruct = Configuration{
 		ReadTimeout:  time.Millisecond * 10,
 		WriteTimeout: time.Millisecond * 10,
 	},
+	Validation: Validation{
+		Manifests: ValidationManifests{
+			Indexes: ValidationIndexes{
+				Platforms: "none",
+			},
+		},
+	},
 }
 
 // configYamlV0_1 is a Version 0.1 yaml document representing configStruct
@@ -167,6 +177,8 @@ storage:
     int1: 42
     url1: "https://foo.example.com"
     path1: "/some-path"
+  tag:
+    concurrencylimit: 10
 auth:
   silly:
     realm: silly
@@ -201,6 +213,10 @@ redis:
   dialtimeout: 10ms
   readtimeout: 10ms
   writetimeout: 10ms
+validation:
+  manifests:
+    indexes:
+      platforms: none
 `
 
 // inmemoryConfigYamlV0_1 is a Version 0.1 yaml document specifying an inmemory
@@ -230,6 +246,10 @@ notifications:
 http:
   headers:
     X-Content-Type-Options: [nosniff]
+validation:
+  manifests:
+    indexes:
+      platforms: none
 `
 
 type ConfigSuite struct {
@@ -290,6 +310,7 @@ func (suite *ConfigSuite) TestParseIncomplete() {
 	suite.expectedConfig.Notifications = Notifications{}
 	suite.expectedConfig.HTTP.Headers = nil
 	suite.expectedConfig.Redis = Redis{}
+	suite.expectedConfig.Validation.Manifests.Indexes.Platforms = ""
 
 	// Note: this also tests that REGISTRY_STORAGE and
 	// REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY can be used together
@@ -542,6 +563,9 @@ func copyConfig(config Configuration) *Configuration {
 	for k, v := range config.Storage.Parameters() {
 		configCopy.Storage.setParameter(k, v)
 	}
+	for k, v := range config.Storage.TagParameters() {
+		configCopy.Storage.setTagParameter(k, v)
+	}
 
 	configCopy.Auth = Auth{config.Auth.Type(): Parameters{}}
 	for k, v := range config.Auth.Parameters() {
@@ -557,6 +581,12 @@ func copyConfig(config Configuration) *Configuration {
 	}
 
 	configCopy.Redis = config.Redis
+
+	configCopy.Validation = Validation{
+		Enabled:   config.Validation.Enabled,
+		Disabled:  config.Validation.Disabled,
+		Manifests: config.Validation.Manifests,
+	}
 
 	return configCopy
 }

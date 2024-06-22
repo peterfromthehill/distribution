@@ -9,11 +9,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
 	"github.com/distribution/distribution/v3/registry/auth"
-	"github.com/go-jose/go-jose/v3"
+	"github.com/go-jose/go-jose/v4"
 	"github.com/sirupsen/logrus"
 )
 
@@ -83,11 +84,12 @@ var (
 
 // authChallenge implements the auth.Challenge interface.
 type authChallenge struct {
-	err          error
-	realm        string
-	autoRedirect bool
-	service      string
-	accessSet    accessSet
+	err              error
+	realm            string
+	autoRedirect     bool
+	autoRedirectPath string
+	service          string
+	accessSet        accessSet
 }
 
 var _ auth.Challenge = authChallenge{}
@@ -102,13 +104,28 @@ func (ac authChallenge) Status() int {
 	return http.StatusUnauthorized
 }
 
+func buildAutoRedirectURL(r *http.Request, autoRedirectPath string) string {
+	scheme := "https"
+
+	if forwardedProto := r.Header.Get("X-Forwarded-Proto"); len(forwardedProto) > 0 {
+		scheme = forwardedProto
+	}
+
+	u := &url.URL{
+		Scheme: scheme,
+		Host:   r.Host,
+		Path:   autoRedirectPath,
+	}
+	return u.String()
+}
+
 // challengeParams constructs the value to be used in
 // the WWW-Authenticate response challenge header.
 // See https://tools.ietf.org/html/rfc6750#section-3
 func (ac authChallenge) challengeParams(r *http.Request) string {
 	var realm string
 	if ac.autoRedirect {
-		realm = fmt.Sprintf("https://%s/auth/token", r.Host)
+		realm = buildAutoRedirectURL(r, ac.autoRedirectPath)
 	} else {
 		realm = ac.realm
 	}
@@ -127,30 +144,38 @@ func (ac authChallenge) challengeParams(r *http.Request) string {
 	return str
 }
 
-// SetChallenge sets the WWW-Authenticate value for the response.
+// SetHeaders sets the WWW-Authenticate value for the response.
 func (ac authChallenge) SetHeaders(r *http.Request, w http.ResponseWriter) {
 	w.Header().Add("WWW-Authenticate", ac.challengeParams(r))
 }
 
 // accessController implements the auth.AccessController interface.
 type accessController struct {
-	realm        string
-	autoRedirect bool
-	issuer       string
-	service      string
-	rootCerts    *x509.CertPool
-	trustedKeys  map[string]crypto.PublicKey
+	realm             string
+	autoRedirect      bool
+	autoRedirectPath  string
+	issuer            string
+	service           string
+	rootCerts         *x509.CertPool
+	trustedKeys       map[string]crypto.PublicKey
+	signingAlgorithms []jose.SignatureAlgorithm
 }
 
+const (
+	defaultAutoRedirectPath = "/auth/token"
+)
+
 // tokenAccessOptions is a convenience type for handling
-// options to the contstructor of an accessController.
+// options to the constructor of an accessController.
 type tokenAccessOptions struct {
-	realm          string
-	autoRedirect   bool
-	issuer         string
-	service        string
-	rootCertBundle string
-	jwks           string
+	realm             string
+	autoRedirect      bool
+	autoRedirectPath  string
+	issuer            string
+	service           string
+	rootCertBundle    string
+	jwks              string
+	signingAlgorithms []string
 }
 
 // checkOptions gathers the necessary options
@@ -183,9 +208,31 @@ func checkOptions(options map[string]interface{}) (tokenAccessOptions, error) {
 	if ok {
 		autoRedirect, ok := autoRedirectVal.(bool)
 		if !ok {
-			return opts, fmt.Errorf("token auth requires a valid option bool: autoredirect")
+			return opts, errors.New("token auth requires a valid option bool: autoredirect")
 		}
 		opts.autoRedirect = autoRedirect
+	}
+	if opts.autoRedirect {
+		autoRedirectPathVal, ok := options["autoredirectpath"]
+		if ok {
+			autoRedirectPath, ok := autoRedirectPathVal.(string)
+			if !ok {
+				return opts, errors.New("token auth requires a valid option string: autoredirectpath")
+			}
+			opts.autoRedirectPath = autoRedirectPath
+		}
+		if opts.autoRedirectPath == "" {
+			opts.autoRedirectPath = defaultAutoRedirectPath
+		}
+	}
+
+	signingAlgos, ok := options["signingalgorithms"]
+	if ok {
+		signingAlgorithmsVals, ok := signingAlgos.([]string)
+		if !ok {
+			return opts, errors.New("signingalgorithms must be a list of signing algorithms")
+		}
+		opts.signingAlgorithms = signingAlgorithmsVals
 	}
 
 	return opts, nil
@@ -243,6 +290,18 @@ func getJwks(path string) (*jose.JSONWebKeySet, error) {
 	return &jwks, nil
 }
 
+func getSigningAlgorithms(algos []string) ([]jose.SignatureAlgorithm, error) {
+	signAlgVals := make([]jose.SignatureAlgorithm, 0, len(algos))
+	for _, alg := range algos {
+		alg, ok := signingAlgorithms[alg]
+		if !ok {
+			return nil, fmt.Errorf("unsupported signing algorithm: %s", alg)
+		}
+		signAlgVals = append(signAlgVals, alg)
+	}
+	return signAlgVals, nil
+}
+
 // newAccessController creates an accessController using the given options.
 func newAccessController(options map[string]interface{}) (auth.AccessController, error) {
 	config, err := checkOptions(options)
@@ -253,6 +312,7 @@ func newAccessController(options map[string]interface{}) (auth.AccessController,
 	var (
 		rootCerts []*x509.Certificate
 		jwks      *jose.JSONWebKeySet
+		signAlgos []jose.SignatureAlgorithm
 	)
 
 	if config.rootCertBundle != "" {
@@ -286,13 +346,25 @@ func newAccessController(options map[string]interface{}) (auth.AccessController,
 		}
 	}
 
+	signAlgos, err = getSigningAlgorithms(config.signingAlgorithms)
+	if err != nil {
+		return nil, err
+	}
+	if len(signAlgos) == 0 {
+		// NOTE: this is to maintain backwards compat
+		// with existing registry deployments
+		signAlgos = defaultSigningAlgorithms
+	}
+
 	return &accessController{
-		realm:        config.realm,
-		autoRedirect: config.autoRedirect,
-		issuer:       config.issuer,
-		service:      config.service,
-		rootCerts:    rootPool,
-		trustedKeys:  trustedKeys,
+		realm:             config.realm,
+		autoRedirect:      config.autoRedirect,
+		autoRedirectPath:  config.autoRedirectPath,
+		issuer:            config.issuer,
+		service:           config.service,
+		rootCerts:         rootPool,
+		trustedKeys:       trustedKeys,
+		signingAlgorithms: signAlgos,
 	}, nil
 }
 
@@ -300,10 +372,11 @@ func newAccessController(options map[string]interface{}) (auth.AccessController,
 // for actions on resources described by the given access items.
 func (ac *accessController) Authorized(req *http.Request, accessItems ...auth.Access) (*auth.Grant, error) {
 	challenge := &authChallenge{
-		realm:        ac.realm,
-		autoRedirect: ac.autoRedirect,
-		service:      ac.service,
-		accessSet:    newAccessSet(accessItems...),
+		realm:            ac.realm,
+		autoRedirect:     ac.autoRedirect,
+		autoRedirectPath: ac.autoRedirectPath,
+		service:          ac.service,
+		accessSet:        newAccessSet(accessItems...),
 	}
 
 	prefix, rawToken, ok := strings.Cut(req.Header.Get("Authorization"), " ")
@@ -312,7 +385,7 @@ func (ac *accessController) Authorized(req *http.Request, accessItems ...auth.Ac
 		return nil, challenge
 	}
 
-	token, err := NewToken(rawToken)
+	token, err := NewToken(rawToken, ac.signingAlgorithms)
 	if err != nil {
 		challenge.err = err
 		return nil, challenge

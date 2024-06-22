@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG GO_VERSION=1.21.5
+ARG GO_VERSION=1.21.8
 ARG ALPINE_VERSION=3.19
 ARG XX_VERSION=1.2.1
 
@@ -52,9 +52,9 @@ COPY --from=releaser /out /
 
 FROM alpine:${ALPINE_VERSION}
 RUN apk add --no-cache ca-certificates
-COPY cmd/registry/config-dev.yml /etc/docker/registry/config.yml
+COPY cmd/registry/config-dev.yml /etc/distribution/config.yml
 COPY --from=binary /registry /bin/registry
 VOLUME ["/var/lib/registry"]
 EXPOSE 5000
 ENTRYPOINT ["registry"]
-CMD ["serve", "/etc/docker/registry/config.yml"]
+CMD ["serve", "/etc/distribution/config.yml"]

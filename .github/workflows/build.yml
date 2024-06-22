@@ -26,8 +26,8 @@ jobs:
       fail-fast: false
       matrix:
         go:
-          - 1.20.12
-          - 1.21.5
+          - 1.21.8
+          - 1.22.1
         target:
           - test-coverage
           - test-cloud-storage
@@ -46,7 +46,7 @@ jobs:
           make ${{ matrix.target }}
       -
         name: Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           directory: ./
 

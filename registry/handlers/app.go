@@ -155,7 +155,11 @@ func NewApp(ctx context.Context, config *configuration.Configuration) *App {
 		panic(err)
 	}
 
-	app.configureSecret(config)
+	// Do not configure HTTP secret for a proxy registry as HTTP secret
+	// is only used for blob uploads and a proxy registry does not support blob uploads.
+	if !app.isCache {
+		app.configureSecret(config)
+	}
 	app.configureEvents(config)
 	app.configureRedis(config)
 	app.configureLogHook(config)
@@ -181,6 +185,21 @@ func NewApp(ctx context.Context, config *configuration.Configuration) *App {
 			if deleteEnabled, ok := e.(bool); ok && deleteEnabled {
 				options = append(options, storage.EnableDelete)
 			}
+		}
+	}
+
+	// configure tag lookup concurrency limit
+	if p := config.Storage.TagParameters(); p != nil {
+		l, ok := p["concurrencylimit"]
+		if ok {
+			limit, ok := l.(int)
+			if !ok {
+				panic("tag lookup concurrency limit config key must have a integer value")
+			}
+			if limit < 0 {
+				panic("tag lookup concurrency limit should be a non-negative integer value")
+			}
+			options = append(options, storage.TagLookupConcurrencyLimit(limit))
 		}
 	}
 
@@ -235,6 +254,21 @@ func NewApp(ctx context.Context, config *configuration.Configuration) *App {
 				re := regexp.MustCompile(strings.Join(config.Validation.Manifests.URLs.Deny, "|"))
 				options = append(options, storage.ManifestURLsDenyRegexp(re))
 			}
+		}
+
+		switch config.Validation.Manifests.Indexes.Platforms {
+		case "list":
+			options = append(options, storage.EnableValidateImageIndexImagesExist)
+			for _, platform := range config.Validation.Manifests.Indexes.PlatformList {
+				options = append(options, storage.AddValidateImageIndexImagesExistPlatform(platform.Architecture, platform.OS))
+			}
+			fallthrough
+		case "none":
+			dcontext.GetLogger(app).Warn("Image index completeness validation has been disabled, which is an experimental option because other container tooling might expect all image indexes to be complete")
+		case "all":
+			fallthrough
+		default:
+			options = append(options, storage.EnableValidateImageIndexImagesExist)
 		}
 	}
 
@@ -409,6 +443,14 @@ func (app *App) RegisterHealthChecks(healthRegistries ...*health.Registry) {
 		healthRegistry.Register(tcpChecker.Addr, updater)
 		go health.Poll(app, updater, checker, interval)
 	}
+}
+
+// Shutdown close the underlying registry
+func (app *App) Shutdown() error {
+	if r, ok := app.registry.(proxy.Closer); ok {
+		return r.Close()
+	}
+	return nil
 }
 
 // register a handler with the application, by route name. The handler will be

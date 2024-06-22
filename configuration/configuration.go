@@ -181,25 +181,7 @@ type Configuration struct {
 	Proxy Proxy `yaml:"proxy,omitempty"`
 
 	// Validation configures validation options for the registry.
-	Validation struct {
-		// Enabled enables the other options in this section. This field is
-		// deprecated in favor of Disabled.
-		Enabled bool `yaml:"enabled,omitempty"`
-		// Disabled disables the other options in this section.
-		Disabled bool `yaml:"disabled,omitempty"`
-		// Manifests configures manifest validation.
-		Manifests struct {
-			// URLs configures validation for URLs in pushed manifests.
-			URLs struct {
-				// Allow specifies regular expressions (https://godoc.org/regexp/syntax)
-				// that URLs in pushed manifests must match.
-				Allow []string `yaml:"allow,omitempty"`
-				// Deny specifies regular expressions (https://godoc.org/regexp/syntax)
-				// that URLs in pushed manifests must not match.
-				Deny []string `yaml:"deny,omitempty"`
-			} `yaml:"urls,omitempty"`
-		} `yaml:"manifests,omitempty"`
-	} `yaml:"validation,omitempty"`
+	Validation Validation `yaml:"validation,omitempty"`
 
 	// Policy configures registry policy options.
 	Policy struct {
@@ -279,7 +261,7 @@ type FileChecker struct {
 
 // Redis configures the redis pool available to the registry webapp.
 type Redis struct {
-	// Addr specifies the the redis instance available to the application.
+	// Addr specifies the redis instance available to the application.
 	Addr string `yaml:"addr,omitempty"`
 
 	// Usernames can be used as a finer-grained permission control since the introduction of the redis 6.0.
@@ -366,6 +348,13 @@ type Health struct {
 	} `yaml:"storagedriver,omitempty"`
 }
 
+type Platform struct {
+	// Architecture is the architecture for this platform
+	Architecture string `yaml:"architecture,omitempty"`
+	// OS is the operating system for this platform
+	OS string `yaml:"os,omitempty"`
+}
+
 // v0_1Configuration is a Version 0.1 Configuration struct
 // This is currently aliased to Configuration, as it is the current version
 type v0_1Configuration Configuration
@@ -441,6 +430,8 @@ func (storage Storage) Type() string {
 			// allow configuration of delete
 		case "redirect":
 			// allow configuration of redirect
+		case "tag":
+			// allow configuration of tag
 		default:
 			storageType = append(storageType, k)
 		}
@@ -452,6 +443,19 @@ func (storage Storage) Type() string {
 		return storageType[0]
 	}
 	return ""
+}
+
+// TagParameters returns the Parameters map for a Storage tag configuration
+func (storage Storage) TagParameters() Parameters {
+	return storage["tag"]
+}
+
+// setTagParameter changes the parameter at the provided key to the new value
+func (storage Storage) setTagParameter(key string, value interface{}) {
+	if _, ok := storage["tag"]; !ok {
+		storage["tag"] = make(Parameters)
+	}
+	storage["tag"][key] = value
 }
 
 // Parameters returns the Parameters map for a Storage configuration
@@ -482,6 +486,8 @@ func (storage *Storage) UnmarshalYAML(unmarshal func(interface{}) error) error {
 					// allow configuration of delete
 				case "redirect":
 					// allow configuration of redirect
+				case "tag":
+					// allow configuration of tag
 				default:
 					types = append(types, k)
 				}
@@ -634,6 +640,62 @@ type Proxy struct {
 	// if not set, defaults to 7 * 24 hours
 	// If set to zero, will never expire cache
 	TTL *time.Duration `yaml:"ttl,omitempty"`
+}
+
+type Validation struct {
+	// Enabled enables the other options in this section. This field is
+	// deprecated in favor of Disabled.
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Disabled disables the other options in this section.
+	Disabled bool `yaml:"disabled,omitempty"`
+	// Manifests configures manifest validation.
+	Manifests ValidationManifests `yaml:"manifests,omitempty"`
+}
+
+type ValidationManifests struct {
+	// URLs configures validation for URLs in pushed manifests.
+	URLs struct {
+		// Allow specifies regular expressions (https://godoc.org/regexp/syntax)
+		// that URLs in pushed manifests must match.
+		Allow []string `yaml:"allow,omitempty"`
+		// Deny specifies regular expressions (https://godoc.org/regexp/syntax)
+		// that URLs in pushed manifests must not match.
+		Deny []string `yaml:"deny,omitempty"`
+	} `yaml:"urls,omitempty"`
+	// ImageIndexes configures validation of image indexes
+	Indexes ValidationIndexes `yaml:"indexes,omitempty"`
+}
+
+type ValidationIndexes struct {
+	// Platforms configures the validation applies to the platform images included in an image index
+	Platforms Platforms `yaml:"platforms"`
+	// PlatformList filters the set of platforms to validate for image existence.
+	PlatformList []Platform `yaml:"platformlist,omitempty"`
+}
+
+// Platforms configures the validation applies to the platform images included in an image index
+// This can be all, none, or list
+type Platforms string
+
+// UnmarshalYAML implements the yaml.Umarshaler interface
+// Unmarshals a string into a Platforms option, lowercasing the string and validating that it represents a
+// valid option
+func (platforms *Platforms) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var platformsString string
+	err := unmarshal(&platformsString)
+	if err != nil {
+		return err
+	}
+
+	platformsString = strings.ToLower(platformsString)
+	switch platformsString {
+	case "all", "none", "list":
+	default:
+		return fmt.Errorf("invalid platforms option %s Must be one of [all, none, list]", platformsString)
+	}
+
+	*platforms = Platforms(platformsString)
+	return nil
 }
 
 // Parse parses an input configuration yaml document into a Configuration struct

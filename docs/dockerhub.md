@@ -31,7 +31,7 @@ docker tag alpine localhost:5000/alpine
 docker push localhost:5000/alpine
 ```
 
-⚠️  Beware the default configuration uses [`filesystem` storage driver](https://github.com/distribution/distribution/blob/main/docs/storage-drivers/filesystem.md)
+⚠️  Beware the default configuration uses [`filesystem` storage driver](https://github.com/distribution/distribution/blob/main/docs/content/storage-drivers/filesystem.md)
 and the above example command does not mount a local filesystem volume into the running container.
 If you wish to mount the local filesystem to the `rootdirectory` of the
 `filesystem` storage driver run the following command:
@@ -44,7 +44,7 @@ docker run -d -p 5000:5000 $PWD/FS/PATH:/var/lib/registry --restart always --nam
 If you don't wan to use the default configuration file, you can supply
 your own custom configuration file as follows:
 ```
-docker run -d -p 5000:5000 $PWD/PATH/TO/config.yml:/etc/docker/registry/config.yml --restart always --name registry distribution/distribution:edge
+docker run -d -p 5000:5000 $PWD/PATH/TO/config.yml:/etc/distribution/config.yml --restart always --name registry distribution/distribution:edge
 ```
 
 ## Communication

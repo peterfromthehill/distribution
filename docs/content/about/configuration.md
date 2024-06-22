@@ -50,7 +50,7 @@ specify it in the `docker run` command:
 
 ```bash
 $ docker run -d -p 5000:5000 --restart=always --name registry \
-             -v `pwd`/config.yml:/etc/docker/registry/config.yml \
+             -v `pwd`/config.yml:/etc/distribution/config.yml \
              registry:2
 ```
 
@@ -141,6 +141,8 @@ storage:
     usedualstack: false
     loglevel: debug
   inmemory:  # This driver takes no parameters
+  tag:
+    concurrencylimit: 8
   delete:
     enabled: false
   redirect:
@@ -166,6 +168,9 @@ auth:
     service: token-service
     issuer: registry-token-issuer
     rootcertbundle: /root/certs/bundle
+    signingalgorithms:
+        - EdDSA
+        - HS256
   htpasswd:
     realm: basic-realm
     path: /path/to/htpasswd
@@ -286,6 +291,11 @@ validation:
         - ^https?://([^/]+\.)*example\.com/
       deny:
         - ^https?://www\.example\.com/
+    indexes:
+      platforms: List
+      platformlist:
+      - architecture: amd64
+        os: linux
 ```
 
 In some instances a configuration option is **optional** but it contains child
@@ -521,6 +531,26 @@ parameter sets a limit on the number of descriptors to store in the cache.
 The default value is 10000. If this parameter is set to 0, the cache is allowed
 to grow with no size limit.
 
+### `tag`
+
+The `tag` subsection provides configuration to set concurrency limit for tag lookup.
+When user calls into the registry to delete the manifest, which in turn then does a
+lookup for all tags that reference the deleted manifest. To find the tag references,
+the registry will iterate every tag in the repository and read it's link file to check
+if it matches the deleted manifest (i.e. to see if uses the same sha256 digest).
+So, the more tags in repository, the worse the performance will be (as there will
+be more S3 API calls occurring for the tag directory lookups and tag file reads if
+using S3 storage driver).
+
+Therefore, add a single flag `concurrencylimit` to set concurrency limit to optimize tag
+lookup performance under the `tag` section. When a value is not provided or equal to 0,
+`GOMAXPROCS` will be used.
+
+```yaml
+tag:
+  concurrencylimit: 8
+```
+
 ### `redirect`
 
 The `redirect` subsection provides configuration for managing redirects from
@@ -550,6 +580,10 @@ auth:
     service: token-service
     issuer: registry-token-issuer
     rootcertbundle: /root/certs/bundle
+    signingalgorithms:
+        - EdDSA
+        - HS256
+        - ES512
   htpasswd:
     realm: basic-realm
     path: /path/to/htpasswd
@@ -591,8 +625,39 @@ security.
 | `service` | yes      | The service being authenticated.                      |
 | `issuer`  | yes      | The name of the token issuer. The issuer inserts this into the token so it must match the value configured for the issuer. |
 | `rootcertbundle` | yes | The absolute path to the root certificate bundle. This bundle contains the public part of the certificates used to sign authentication tokens. |
-| `autoredirect`   | no      | When set to `true`, `realm` will automatically be set using the Host header of the request as the domain and a path of `/auth/token/`|
+| `autoredirect`   | no      | When set to `true`, `realm` will automatically be set using the Host header of the request as the domain and a path of `/auth/token/`(or specified by `autoredirectpath`), the `realm` URL Scheme will use `X-Forwarded-Proto` header if set, otherwise it will be set to `https`. |
+| `autoredirectpath`   | no      | The path to redirect to if `autoredirect` is set to `true`, default: `/auth/token/`. |
+| `signingalgorithms`  | no      | A list of token signing algorithms to use for verifying token signatures. If left empty the default list of signing algorithms is used. Please see below for allowed values and default. |
 
+Available `signingalgorithms`:
+- EdDSA
+- HS256
+- HS384
+- HS512
+- RS256
+- RS384
+- RS512
+- ES256
+- ES384
+- ES512
+- PS256
+- PS384
+- PS512
+
+Default `signingalgorithms`:
+- EdDSA
+- HS256
+- HS384
+- HS512
+- RS256
+- RS384
+- RS512
+- ES256
+- ES384
+- ES512
+- PS256
+- PS384
+- PS512
 
 For more information about Token based authentication configuration, see the
 [specification](../spec/auth/token.md).
@@ -1137,13 +1202,13 @@ username (such as `batman`) and the password for that username.
 
 ```yaml
 validation:
-  manifests:
-    urls:
-      allow:
-        - ^https?://([^/]+\.)*example\.com/
-      deny:
-        - ^https?://www\.example\.com/
+  disabled: false
 ```
+
+Use these settings to configure what validation the registry performs on content.
+
+Validation is performed when content is uploaded to the registry. Changing these
+settings will not validate content that has already been accepting into the registry.
 
 ### `disabled`
 
@@ -1157,6 +1222,16 @@ Use the `manifests` subsection to configure validation of manifests. If
 
 #### `urls`
 
+```yaml
+validation:
+  manifests:
+    urls:
+      allow:
+        - ^https?://([^/]+\.)*example\.com/
+      deny:
+        - ^https?://www\.example\.com/
+```
+
 The `allow` and `deny` options are each a list of
 [regular expressions](https://pkg.go.dev/regexp/syntax) that restrict the URLs in
 pushed manifests.
@@ -1169,6 +1244,54 @@ one of the `allow` regular expressions **and** one of the following holds:
 1. `deny` is unset.
 2. `deny` is set but no URLs within the manifest match any of the `deny` regular
    expressions.
+
+#### `indexes`
+
+By default the registry will validate that all platform images exist when an image
+index is uploaded to the registry. Disabling this validatation is experimental
+because other tooling that uses the registry may expect the image index to be complete.
+
+validation:
+  manifests:
+    indexes:
+      platforms: [all|none|list]
+      platformlist:
+      - os: linux
+        architecture: amd64
+
+Use these settings to configure what validation the registry performs on image
+index manifests uploaded to the registry.
+
+##### `platforms`
+
+Set `platformexist` to `all` (the default) to validate all platform images exist.
+The registry will validate that the images referenced by the index exist in the
+registry before accepting the image index.
+
+Set `platforms` to `none` to disable all validation that images exist when an
+image index manifest is uploaded. This allows image lists to be uploaded to the
+registry without their associated images. This setting is experimental because
+other tooling that uses the registry may expect the image index to be complete.
+
+Set `platforms` to `list` to selectively validate the existence of platforms
+within image index manifests. This setting is experimental because other tooling
+that uses the registry may expect the image index to be complete.
+
+##### `platformlist`
+
+When `platforms` is set to `list`, set `platformlist` to an array of
+platforms to validate. If a platform is included in this the array and in the images
+contained within an index, the registry will validate that the platform specific image
+exists in the registry before accepting the index. The registry will not validate the
+existence of platform specific images in the index that do not appear in the
+`platformlist` array.
+
+This parameter does not validate that the configured platforms are included in every
+index. If an image index does not include one of the platform specific images configured
+in the `platformlist` array, it may still be accepted by the registry.
+
+Each platform is a map with two keys, `os` and `architecture`, as defined in the
+[OCI Image Index specification](https://github.com/opencontainers/image-spec/blob/main/image-index.md#image-index-property-descriptions).
 
 ## Example: Development configuration
 
