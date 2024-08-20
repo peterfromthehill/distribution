@@ -223,12 +223,13 @@ func FromParameters(ctx context.Context, parameters map[string]interface{}) (*Dr
 	}
 
 	regionName := parameters["region"]
-	if regionName == nil || fmt.Sprint(regionName) == "" {
-		return nil, fmt.Errorf("no region parameter provided")
-	}
 	region := fmt.Sprint(regionName)
+
 	// Don't check the region value if a custom endpoint is provided.
 	if regionEndpoint == "" {
+		if regionName == nil || region == "" {
+			return nil, fmt.Errorf("no region parameter provided")
+		}
 		if _, ok := validRegions[region]; !ok {
 			return nil, fmt.Errorf("invalid region provided: %v", region)
 		}
@@ -763,37 +764,76 @@ func (d *driver) Writer(ctx context.Context, path string, appendMode bool) (stor
 	return nil, storagedriver.PathNotFoundError{Path: path}
 }
 
-// Stat retrieves the FileInfo for the given path, including the current size
-// in bytes and the creation time.
-func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+func (d *driver) statHead(ctx context.Context, path string) (*storagedriver.FileInfoFields, error) {
+	resp, err := d.S3.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(d.Bucket),
+		Key:    aws.String(d.s3Path(path)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &storagedriver.FileInfoFields{
+		Path:    path,
+		IsDir:   false,
+		Size:    *resp.ContentLength,
+		ModTime: *resp.LastModified,
+	}, nil
+}
+
+func (d *driver) statList(ctx context.Context, path string) (*storagedriver.FileInfoFields, error) {
+	s3Path := d.s3Path(path)
 	resp, err := d.S3.ListObjectsV2WithContext(ctx, &s3.ListObjectsV2Input{
 		Bucket:  aws.String(d.Bucket),
-		Prefix:  aws.String(d.s3Path(path)),
+		Prefix:  aws.String(s3Path),
 		MaxKeys: aws.Int64(1),
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	fi := storagedriver.FileInfoFields{
-		Path: path,
-	}
-
 	if len(resp.Contents) == 1 {
-		if *resp.Contents[0].Key != d.s3Path(path) {
-			fi.IsDir = true
-		} else {
-			fi.IsDir = false
-			fi.Size = *resp.Contents[0].Size
-			fi.ModTime = *resp.Contents[0].LastModified
+		if *resp.Contents[0].Key != s3Path {
+			return &storagedriver.FileInfoFields{
+				Path:  path,
+				IsDir: true,
+			}, nil
 		}
-	} else if len(resp.CommonPrefixes) == 1 {
-		fi.IsDir = true
-	} else {
-		return nil, storagedriver.PathNotFoundError{Path: path}
+		return &storagedriver.FileInfoFields{
+			Path:    path,
+			Size:    *resp.Contents[0].Size,
+			ModTime: *resp.Contents[0].LastModified,
+		}, nil
 	}
+	if len(resp.CommonPrefixes) == 1 {
+		return &storagedriver.FileInfoFields{
+			Path:  path,
+			IsDir: true,
+		}, nil
+	}
+	return nil, storagedriver.PathNotFoundError{Path: path}
+}
 
-	return storagedriver.FileInfoInternal{FileInfoFields: fi}, nil
+// Stat retrieves the FileInfo for the given path, including the current size
+// in bytes and the creation time.
+func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+	fi, err := d.statHead(ctx, path)
+	if err != nil {
+		// For AWS errors, we fail over to ListObjects:
+		// Though the official docs https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html#API_HeadObject_Errors
+		// are slightly outdated, the HeadObject actually returns NotFound error
+		// if querying a key which doesn't exist or a key which has nested keys
+		// and Forbidden if IAM/ACL permissions do not allow Head but allow List.
+		var awsErr awserr.Error
+		if errors.As(err, &awsErr) {
+			fi, err := d.statList(ctx, path)
+			if err != nil {
+				return nil, parseError(path, err)
+			}
+			return storagedriver.FileInfoInternal{FileInfoFields: *fi}, nil
+		}
+		// For non-AWS errors, return the error directly
+		return nil, err
+	}
+	return storagedriver.FileInfoInternal{FileInfoFields: *fi}, nil
 }
 
 // List returns a list of the objects that are direct descendants of the given path.
@@ -834,19 +874,19 @@ func (d *driver) List(ctx context.Context, opath string) ([]string, error) {
 			directories = append(directories, strings.Replace(commonPrefix[0:len(commonPrefix)-1], d.s3Path(""), prefix, 1))
 		}
 
-		if *resp.IsTruncated {
-			resp, err = d.S3.ListObjectsV2WithContext(ctx, &s3.ListObjectsV2Input{
-				Bucket:            aws.String(d.Bucket),
-				Prefix:            aws.String(d.s3Path(path)),
-				Delimiter:         aws.String("/"),
-				MaxKeys:           aws.Int64(listMax),
-				ContinuationToken: resp.NextContinuationToken,
-			})
-			if err != nil {
-				return nil, err
-			}
-		} else {
+		if resp.IsTruncated == nil || !*resp.IsTruncated {
 			break
+		}
+
+		resp, err = d.S3.ListObjectsV2WithContext(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(d.Bucket),
+			Prefix:            aws.String(d.s3Path(path)),
+			Delimiter:         aws.String("/"),
+			MaxKeys:           aws.Int64(listMax),
+			ContinuationToken: resp.NextContinuationToken,
+		})
+		if err != nil {
+			return nil, err
 		}
 	}
 

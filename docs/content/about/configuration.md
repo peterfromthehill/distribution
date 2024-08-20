@@ -168,6 +168,7 @@ auth:
     service: token-service
     issuer: registry-token-issuer
     rootcertbundle: /root/certs/bundle
+    jwks: /path/to/jwks
     signingalgorithms:
         - EdDSA
         - HS256
@@ -246,16 +247,20 @@ notifications:
         actions:
            - pull
 redis:
-  addr: localhost:6379
+  tls:
+    certificate: /path/to/cert.crt
+    key: /path/to/key.pem
+    clientcas:
+      - /path/to/ca.pem
+  addrs: [localhost:6379]
   password: asecret
   db: 0
   dialtimeout: 10ms
   readtimeout: 10ms
   writetimeout: 10ms
-  pool:
-    maxidle: 16
-    maxactive: 64
-    idletimeout: 300s
+  maxidleconns: 16
+  poolsize: 64
+  connmaxidletime: 300s
   tls:
     enabled: false
 health:
@@ -580,6 +585,7 @@ auth:
     service: token-service
     issuer: registry-token-issuer
     rootcertbundle: /root/certs/bundle
+    jwks: /path/to/jwks
     signingalgorithms:
         - EdDSA
         - HS256
@@ -619,15 +625,16 @@ Token-based authentication allows you to decouple the authentication system from
 the registry. It is an established authentication paradigm with a high degree of
 security.
 
-| Parameter | Required | Description                                           |
-|-----------|----------|-------------------------------------------------------|
-| `realm`   | yes      | The realm in which the registry server authenticates. |
-| `service` | yes      | The service being authenticated.                      |
-| `issuer`  | yes      | The name of the token issuer. The issuer inserts this into the token so it must match the value configured for the issuer. |
-| `rootcertbundle` | yes | The absolute path to the root certificate bundle. This bundle contains the public part of the certificates used to sign authentication tokens. |
-| `autoredirect`   | no      | When set to `true`, `realm` will automatically be set using the Host header of the request as the domain and a path of `/auth/token/`(or specified by `autoredirectpath`), the `realm` URL Scheme will use `X-Forwarded-Proto` header if set, otherwise it will be set to `https`. |
-| `autoredirectpath`   | no      | The path to redirect to if `autoredirect` is set to `true`, default: `/auth/token/`. |
-| `signingalgorithms`  | no      | A list of token signing algorithms to use for verifying token signatures. If left empty the default list of signing algorithms is used. Please see below for allowed values and default. |
+| Parameter            | Required | Description                                           |
+|----------------------|----------|-------------------------------------------------------|
+| `realm`              | yes      | The realm in which the registry server authenticates. |
+| `service`            | yes      | The service being authenticated.                      |
+| `issuer`             | yes      | The name of the token issuer. The issuer inserts this into the token so it must match the value configured for the issuer. |
+| `rootcertbundle`     | yes      | The absolute path to the root certificate bundle. This bundle contains the public part of the certificates used to sign authentication tokens. |
+| `autoredirect`       | no       | When set to `true`, `realm` will be set to the Host header of the request as the domain and a path of `/auth/token/`(or specified by `autoredirectpath`), the `realm` URL Scheme will use `X-Forwarded-Proto` header if set, otherwise it will be set to `https`. |
+| `autoredirectpath`   | no       | The path to redirect to if `autoredirect` is set to `true`, default: `/auth/token/`. |
+| `signingalgorithms`  | no       | A list of token signing algorithms to use for verifying token signatures. If left empty the default list of signing algorithms is used. Please see below for allowed values and default. |
+| `jwks`               | no       | The absolute path to the JSON Web Key Set (JWKS) file. The JWKS file contains the trusted keys used to verify the signature of authentication tokens. |
 
 Available `signingalgorithms`:
 - EdDSA
@@ -1017,71 +1024,45 @@ The `events` structure configures the information provided in event notification
 
 ## `redis`
 
+Declare parameters for constructing the `redis` connections. Registry instances
+may use the Redis instance for several applications. Currently, it caches
+information about immutable blobs. Most of the `redis` options control
+how the registry connects to the `redis` instance.
+
+You should configure Redis with the **allkeys-lru** eviction policy, because the
+registry does not set an expiration value on keys.
+
+Under the hood distribution uses [`go-redis`](https://github.com/redis/go-redis) Go module for
+Redis connectivity and its [`UniversalOptions`](https://pkg.go.dev/github.com/redis/go-redis/v9#UniversalOptions)
+struct.
+
+You can optionally specify TLS configuration on top of the `UniversalOptions` settings.
+
+Use these settings to configure Redis TLS:
+
+| Parameter | Required | Description                                           |
+|-----------|----------|-------------------------------------------------------|
+| `certificate`  | yes  | Absolute path to the x509 certificate file.           |
+| `key`          | yes  | Absolute path to the x509 private key file.           |
+| `clientcas`    | no   | An array of absolute paths to x509 CA files.          |
+
 ```yaml
 redis:
-  addr: localhost:6379
+  tls:
+    certificate: /path/to/cert.crt
+    key: /path/to/key.pem
+    clientcas:
+      - /path/to/ca.pem
+  addrs: [localhost:6379]
   password: asecret
   db: 0
   dialtimeout: 10ms
   readtimeout: 10ms
   writetimeout: 10ms
-  pool:
-    maxidle: 16
-    maxactive: 64
-    idletimeout: 300s
-  tls:
-    enabled: false
+  maxidleconns: 16
+  poolsize: 64
+  connmaxidletime: 300s
 ```
-
-Declare parameters for constructing the `redis` connections. Registry instances
-may use the Redis instance for several applications. Currently, it caches
-information about immutable blobs. Most of the `redis` options control
-how the registry connects to the `redis` instance. You can control the pool's
-behavior with the [pool](#pool) subsection. Additionally, you can control
-TLS connection settings with the [tls](#tls) subsection (in-transit encryption).
-
-You should configure Redis with the **allkeys-lru** eviction policy, because the
-registry does not set an expiration value on keys.
-
-| Parameter | Required | Description                                           |
-|-----------|----------|-------------------------------------------------------|
-| `addr`    | yes      | The address (host and port) of the Redis instance.    |
-| `password`| no       | A password used to authenticate to the Redis instance.|
-| `db`      | no       | The name of the database to use for each connection.  |
-| `dialtimeout` | no   | The timeout for connecting to the Redis instance.     |
-| `readtimeout` | no   | The timeout for reading from the Redis instance.      |
-| `writetimeout` | no  | The timeout for writing to the Redis instance.        |
-
-### `pool`
-
-```yaml
-pool:
-  maxidle: 16
-  maxactive: 64
-  idletimeout: 300s
-```
-
-Use these settings to configure the behavior of the Redis connection pool.
-
-| Parameter | Required | Description                                           |
-|-----------|----------|-------------------------------------------------------|
-| `maxidle` | no       | The maximum number of idle connections in the pool.   |
-| `maxactive`| no      | The maximum number of connections which can be open before blocking a connection request. |
-| `idletimeout`| no    | How long to wait before closing inactive connections. |
-
-### `tls`
-
-```yaml
-tls:
-  enabled: false
-```
-
-Use these settings to configure Redis TLS.
-
-| Parameter | Required | Description                           |
-|-----------|----------|-------------------------------------- |
-| `enabled` | no       | Whether or not to use TLS in-transit. |
-
 
 ## `health`
 

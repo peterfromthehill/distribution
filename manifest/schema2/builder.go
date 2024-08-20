@@ -4,10 +4,11 @@ import (
 	"context"
 
 	"github.com/distribution/distribution/v3"
+	"github.com/opencontainers/image-spec/specs-go"
 )
 
-// builder is a type for constructing manifests.
-type builder struct {
+// Builder is a type for constructing manifests.
+type Builder struct {
 	// configDescriptor is used to describe configuration
 	configDescriptor distribution.Descriptor
 
@@ -22,8 +23,8 @@ type builder struct {
 // NewManifestBuilder is used to build new manifests for the current schema
 // version. It takes a BlobService so it can publish the configuration blob
 // as part of the Build process.
-func NewManifestBuilder(configDescriptor distribution.Descriptor, configJSON []byte) distribution.ManifestBuilder {
-	mb := &builder{
+func NewManifestBuilder(configDescriptor distribution.Descriptor, configJSON []byte) *Builder {
+	mb := &Builder{
 		configDescriptor: configDescriptor,
 		configJSON:       make([]byte, len(configJSON)),
 	}
@@ -33,9 +34,10 @@ func NewManifestBuilder(configDescriptor distribution.Descriptor, configJSON []b
 }
 
 // Build produces a final manifest from the given references.
-func (mb *builder) Build(ctx context.Context) (distribution.Manifest, error) {
+func (mb *Builder) Build(ctx context.Context) (distribution.Manifest, error) {
 	m := Manifest{
-		Versioned: SchemaVersion,
+		Versioned: specs.Versioned{SchemaVersion: defaultSchemaVersion},
+		MediaType: defaultMediaType,
 		Layers:    make([]distribution.Descriptor, len(mb.dependencies)),
 	}
 	copy(m.Layers, mb.dependencies)
@@ -46,12 +48,12 @@ func (mb *builder) Build(ctx context.Context) (distribution.Manifest, error) {
 }
 
 // AppendReference adds a reference to the current ManifestBuilder.
-func (mb *builder) AppendReference(d distribution.Describable) error {
-	mb.dependencies = append(mb.dependencies, d.Descriptor())
+func (mb *Builder) AppendReference(ref distribution.Descriptor) error {
+	mb.dependencies = append(mb.dependencies, ref)
 	return nil
 }
 
 // References returns the current references added to this builder.
-func (mb *builder) References() []distribution.Descriptor {
+func (mb *Builder) References() []distribution.Descriptor {
 	return mb.dependencies
 }
