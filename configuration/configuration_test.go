@@ -15,16 +15,7 @@ import (
 // configStruct is a canonical example configuration, which should map to configYamlV0_1
 var configStruct = Configuration{
 	Version: "0.1",
-	Log: struct {
-		AccessLog struct {
-			Disabled bool `yaml:"disabled,omitempty"`
-		} `yaml:"accesslog,omitempty"`
-		Level        Loglevel               `yaml:"level,omitempty"`
-		Formatter    string                 `yaml:"formatter,omitempty"`
-		Fields       map[string]interface{} `yaml:"fields,omitempty"`
-		Hooks        []LogHook              `yaml:"hooks,omitempty"`
-		ReportCaller bool                   `yaml:"reportcaller,omitempty"`
-	}{
+	Log: Log{
 		Level:  "info",
 		Fields: map[string]interface{}{"environment": "test"},
 	},
@@ -38,6 +29,9 @@ var configStruct = Configuration{
 			"int1":    42,
 			"url1":    "https://foo.example.com",
 			"path1":   "/some-path",
+		},
+		"tag": Parameters{
+			"concurrencylimit": 10,
 		},
 	},
 	Auth: Auth{
@@ -65,88 +59,46 @@ var configStruct = Configuration{
 	Catalog: Catalog{
 		MaxEntries: 1000,
 	},
-	HTTP: struct {
-		Addr         string        `yaml:"addr,omitempty"`
-		Net          string        `yaml:"net,omitempty"`
-		Host         string        `yaml:"host,omitempty"`
-		Prefix       string        `yaml:"prefix,omitempty"`
-		Secret       string        `yaml:"secret,omitempty"`
-		RelativeURLs bool          `yaml:"relativeurls,omitempty"`
-		DrainTimeout time.Duration `yaml:"draintimeout,omitempty"`
-		TLS          struct {
-			Certificate  string   `yaml:"certificate,omitempty"`
-			Key          string   `yaml:"key,omitempty"`
-			ClientCAs    []string `yaml:"clientcas,omitempty"`
-			MinimumTLS   string   `yaml:"minimumtls,omitempty"`
-			CipherSuites []string `yaml:"ciphersuites,omitempty"`
-			LetsEncrypt  struct {
-				CacheFile    string   `yaml:"cachefile,omitempty"`
-				Email        string   `yaml:"email,omitempty"`
-				Hosts        []string `yaml:"hosts,omitempty"`
-				DirectoryURL string   `yaml:"directoryurl,omitempty"`
-			} `yaml:"letsencrypt,omitempty"`
-		} `yaml:"tls,omitempty"`
-		Headers http.Header `yaml:"headers,omitempty"`
-		Debug   struct {
-			Addr       string `yaml:"addr,omitempty"`
-			Prometheus struct {
-				Enabled bool   `yaml:"enabled,omitempty"`
-				Path    string `yaml:"path,omitempty"`
-			} `yaml:"prometheus,omitempty"`
-		} `yaml:"debug,omitempty"`
-		HTTP2 struct {
-			Disabled bool `yaml:"disabled,omitempty"`
-		} `yaml:"http2,omitempty"`
-		H2C struct {
-			Enabled bool `yaml:"enabled,omitempty"`
-		} `yaml:"h2c,omitempty"`
-	}{
-		TLS: struct {
-			Certificate  string   `yaml:"certificate,omitempty"`
-			Key          string   `yaml:"key,omitempty"`
-			ClientCAs    []string `yaml:"clientcas,omitempty"`
-			MinimumTLS   string   `yaml:"minimumtls,omitempty"`
-			CipherSuites []string `yaml:"ciphersuites,omitempty"`
-			LetsEncrypt  struct {
-				CacheFile    string   `yaml:"cachefile,omitempty"`
-				Email        string   `yaml:"email,omitempty"`
-				Hosts        []string `yaml:"hosts,omitempty"`
-				DirectoryURL string   `yaml:"directoryurl,omitempty"`
-			} `yaml:"letsencrypt,omitempty"`
-		}{
-			ClientCAs: []string{"/path/to/ca.pem"},
+	HTTP: HTTP{
+		TLS: TLS{
+			ClientCAs:  []string{"/path/to/ca.pem"},
+			ClientAuth: ClientAuthVerifyClientCertIfGiven,
 		},
 		Headers: http.Header{
 			"X-Content-Type-Options": []string{"nosniff"},
 		},
-		HTTP2: struct {
-			Disabled bool `yaml:"disabled,omitempty"`
-		}{
+		HTTP2: HTTP2{
 			Disabled: false,
 		},
-		H2C: struct {
-			Enabled bool `yaml:"enabled,omitempty"`
-		}{
+		H2C: H2C{
 			Enabled: true,
 		},
 	},
 	Redis: Redis{
-		Addr:     "localhost:6379",
-		Username: "alice",
-		Password: "123456",
-		DB:       1,
-		Pool: struct {
-			MaxIdle     int           `yaml:"maxidle,omitempty"`
-			MaxActive   int           `yaml:"maxactive,omitempty"`
-			IdleTimeout time.Duration `yaml:"idletimeout,omitempty"`
-		}{
-			MaxIdle:     16,
-			MaxActive:   64,
-			IdleTimeout: time.Second * 300,
+		Options: RedisOptions{
+			Addrs:           []string{"localhost:6379"},
+			Username:        "alice",
+			Password:        "123456",
+			DB:              1,
+			MaxIdleConns:    16,
+			PoolSize:        64,
+			ConnMaxIdleTime: time.Second * 300,
+			DialTimeout:     time.Millisecond * 10,
+			ReadTimeout:     time.Millisecond * 10,
+			WriteTimeout:    time.Millisecond * 10,
 		},
-		DialTimeout:  time.Millisecond * 10,
-		ReadTimeout:  time.Millisecond * 10,
-		WriteTimeout: time.Millisecond * 10,
+		TLS: RedisTLSOptions{
+			Certificate: "/foo/cert.crt",
+			Key:         "/foo/key.pem",
+			ClientCAs:   []string{"/path/to/ca.pem"},
+		},
+	},
+	Validation: Validation{
+		Manifests: ValidationManifests{
+			Indexes: ValidationIndexes{
+				Platforms: "none",
+			},
+		},
 	},
 }
 
@@ -167,6 +119,8 @@ storage:
     int1: 42
     url1: "https://foo.example.com"
     path1: "/some-path"
+  tag:
+    concurrencylimit: 10
 auth:
   silly:
     realm: silly
@@ -185,22 +139,32 @@ notifications:
         actions:
            - pull
 http:
-  clientcas:
-    - /path/to/ca.pem
+  tls:
+    clientcas:
+      - /path/to/ca.pem
+    clientauth: verify-client-cert-if-given
   headers:
     X-Content-Type-Options: [nosniff]
 redis:
-  addr: localhost:6379
+  tls:
+    certificate: /foo/cert.crt
+    key: /foo/key.pem
+    clientcas:
+      - /path/to/ca.pem
+  addrs: [localhost:6379]
   username: alice
-  password: 123456
+  password: "123456"
   db: 1
-  pool:
-    maxidle: 16
-    maxactive: 64
-    idletimeout: 300s
+  maxidleconns: 16
+  poolsize: 64
+  connmaxidletime: 300s
   dialtimeout: 10ms
   readtimeout: 10ms
   writetimeout: 10ms
+validation:
+  manifests:
+    indexes:
+      platforms: none
 `
 
 // inmemoryConfigYamlV0_1 is a Version 0.1 yaml document specifying an inmemory
@@ -230,6 +194,10 @@ notifications:
 http:
   headers:
     X-Content-Type-Options: [nosniff]
+validation:
+  manifests:
+    indexes:
+      platforms: none
 `
 
 type ConfigSuite struct {
@@ -269,6 +237,8 @@ func (suite *ConfigSuite) TestParseSimple() {
 func (suite *ConfigSuite) TestParseInmemory() {
 	suite.expectedConfig.Storage = Storage{"inmemory": Parameters{}}
 	suite.expectedConfig.Log.Fields = nil
+	suite.expectedConfig.HTTP.TLS.ClientCAs = nil
+	suite.expectedConfig.HTTP.TLS.ClientAuth = ""
 	suite.expectedConfig.Redis = Redis{}
 
 	config, err := Parse(bytes.NewReader([]byte(inmemoryConfigYamlV0_1)))
@@ -289,7 +259,10 @@ func (suite *ConfigSuite) TestParseIncomplete() {
 	suite.expectedConfig.Auth = Auth{"silly": Parameters{"realm": "silly"}}
 	suite.expectedConfig.Notifications = Notifications{}
 	suite.expectedConfig.HTTP.Headers = nil
+	suite.expectedConfig.HTTP.TLS.ClientCAs = nil
+	suite.expectedConfig.HTTP.TLS.ClientAuth = ""
 	suite.expectedConfig.Redis = Redis{}
+	suite.expectedConfig.Validation.Manifests.Indexes.Platforms = ""
 
 	// Note: this also tests that REGISTRY_STORAGE and
 	// REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY can be used together
@@ -542,6 +515,9 @@ func copyConfig(config Configuration) *Configuration {
 	for k, v := range config.Storage.Parameters() {
 		configCopy.Storage.setParameter(k, v)
 	}
+	for k, v := range config.Storage.TagParameters() {
+		configCopy.Storage.setTagParameter(k, v)
+	}
 
 	configCopy.Auth = Auth{config.Auth.Type(): Parameters{}}
 	for k, v := range config.Auth.Parameters() {
@@ -555,8 +531,21 @@ func copyConfig(config Configuration) *Configuration {
 	for k, v := range config.HTTP.Headers {
 		configCopy.HTTP.Headers[k] = v
 	}
+	configCopy.HTTP.TLS.ClientCAs = make([]string, 0, len(config.HTTP.TLS.ClientCAs))
+	configCopy.HTTP.TLS.ClientCAs = append(configCopy.HTTP.TLS.ClientCAs, config.HTTP.TLS.ClientCAs...)
+	configCopy.HTTP.TLS.ClientAuth = config.HTTP.TLS.ClientAuth
 
 	configCopy.Redis = config.Redis
+	configCopy.Redis.TLS.Certificate = config.Redis.TLS.Certificate
+	configCopy.Redis.TLS.Key = config.Redis.TLS.Key
+	configCopy.Redis.TLS.ClientCAs = make([]string, 0, len(config.Redis.TLS.ClientCAs))
+	configCopy.Redis.TLS.ClientCAs = append(configCopy.Redis.TLS.ClientCAs, config.Redis.TLS.ClientCAs...)
+
+	configCopy.Validation = Validation{
+		Enabled:   config.Validation.Enabled,
+		Disabled:  config.Validation.Disabled,
+		Manifests: config.Validation.Manifests,
+	}
 
 	return configCopy
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -78,11 +79,16 @@ var tlsVersions = map[string]uint16{
 	"tls1.3": tls.VersionTLS13,
 }
 
+// tlsClientAuth maps user-specified values to TLS Client Authentication constants.
+var tlsClientAuth = map[string]tls.ClientAuthType{
+	configuration.ClientAuthRequestClientCert:          tls.RequestClientCert,
+	configuration.ClientAuthRequireAnyClientCert:       tls.RequireAnyClientCert,
+	configuration.ClientAuthVerifyClientCertIfGiven:    tls.VerifyClientCertIfGiven,
+	configuration.ClientAuthRequireAndVerifyClientCert: tls.RequireAndVerifyClientCert,
+}
+
 // defaultLogFormatter is the default formatter to use for logs.
 const defaultLogFormatter = "text"
-
-// this channel gets notified when process receives signal. It is global to ease unit testing
-var quit = make(chan os.Signal, 1)
 
 // HandlerFunc defines an http middleware
 type HandlerFunc func(config *configuration.Configuration, handler http.Handler) http.Handler
@@ -130,6 +136,7 @@ type Registry struct {
 	config *configuration.Configuration
 	app    *handlers.App
 	server *http.Server
+	quit   chan os.Signal
 }
 
 // NewRegistry creates a new registry from a context and configuration struct.
@@ -173,6 +180,7 @@ func NewRegistry(ctx context.Context, config *configuration.Configuration) (*Reg
 		app:    app,
 		config: config,
 		server: server,
+		quit:   make(chan os.Signal, 1),
 	}, nil
 }
 
@@ -298,7 +306,18 @@ func (registry *Registry) ListenAndServe() error {
 				dcontext.GetLogger(registry.app).Debugf("CA Subject: %s", string(subj))
 			}
 
-			tlsConf.ClientAuth = tls.RequireAndVerifyClientCert
+			if config.HTTP.TLS.ClientAuth != "" {
+				tlsClientAuthMod, ok := tlsClientAuth[string(config.HTTP.TLS.ClientAuth)]
+
+				if !ok {
+					return fmt.Errorf("unknown client auth mod '%s' specified for http.tls.clientauth", config.HTTP.TLS.ClientAuth)
+				}
+
+				tlsConf.ClientAuth = tlsClientAuthMod
+			} else {
+				tlsConf.ClientAuth = tls.RequireAndVerifyClientCert
+			}
+
 			tlsConf.ClientCAs = pool
 		}
 
@@ -313,7 +332,7 @@ func (registry *Registry) ListenAndServe() error {
 	}
 
 	// setup channel to get notified on SIGTERM signal
-	signal.Notify(quit, syscall.SIGTERM)
+	signal.Notify(registry.quit, os.Interrupt, syscall.SIGTERM)
 	serveErr := make(chan error)
 
 	// Start serving in goroutine and listen for stop signal in main thread
@@ -324,13 +343,22 @@ func (registry *Registry) ListenAndServe() error {
 	select {
 	case err := <-serveErr:
 		return err
-	case <-quit:
+	case <-registry.quit:
 		dcontext.GetLogger(registry.app).Info("stopping server gracefully. Draining connections for ", config.HTTP.DrainTimeout)
 		// shutdown the server with a grace period of configured timeout
 		c, cancel := context.WithTimeout(context.Background(), config.HTTP.DrainTimeout)
 		defer cancel()
-		return registry.server.Shutdown(c)
+		return registry.Shutdown(c)
 	}
+}
+
+// Shutdown gracefully shuts down the registry's HTTP server and application object.
+func (registry *Registry) Shutdown(ctx context.Context) error {
+	err := registry.server.Shutdown(ctx)
+	if appErr := registry.app.Shutdown(); appErr != nil {
+		err = errors.Join(err, appErr)
+	}
+	return err
 }
 
 func configureDebugServer(config *configuration.Configuration) {

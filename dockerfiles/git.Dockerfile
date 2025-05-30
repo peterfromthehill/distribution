@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-ARG GO_VERSION=1.20.12
-ARG ALPINE_VERSION=3.19
+ARG GO_VERSION=1.23.7
+ARG ALPINE_VERSION=3.21
 
 FROM alpine:${ALPINE_VERSION} AS base
 RUN apk add --no-cache git gpg
